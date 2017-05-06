@@ -44,6 +44,11 @@ import com.baidu.mapapi.map.MyLocationData;
 import com.baidu.mapapi.map.OverlayOptions;
 import com.baidu.mapapi.model.LatLng;
 import com.baidu.mapapi.model.inner.Point;
+import com.baidu.trace.LBSTraceClient;
+import com.baidu.trace.Trace;
+import com.baidu.trace.api.track.OnTrackListener;
+import com.baidu.trace.model.OnTraceListener;
+import com.baidu.trace.model.PushMessage;
 
 import java.security.Permission;
 import java.util.List;
@@ -55,13 +60,19 @@ public class MainActivity extends AppCompatActivity {
     private MapView mapView;        //百度地图View
     private BaiduMap baiduMap;      //百度地图对象
 
-//    private LocationManager locationManager;
+    //定位服务
     private LocationClient mLocationClient;         //百度api location客户端控制pai服务
     public BDLocationListener myListener = new MyLocationListener();        //百度Api  location监听器获取并处理位置信息
-
-
     private MyLocationConfiguration.LocationMode mCurrentMode = MyLocationConfiguration.LocationMode.NORMAL; //定位模式
     private BitmapDescriptor currentMarker;       //定位标志
+
+    //鹰眼轨迹服务
+    private long traceServiceId=140176;
+    private String entityName = "myTrace";
+    boolean isNeedObjectStorage = false;
+    private Trace mTrace;
+    private LBSTraceClient mTraceClient;
+
 
     Toast toast;
     String[] permissions = {Manifest.permission.ACCESS_COARSE_LOCATION};    //gps权限
@@ -72,7 +83,6 @@ public class MainActivity extends AppCompatActivity {
         SDKInitializer.initialize(getApplicationContext());
         setContentView(R.layout.activity_main);
         init();
-       startGetLocation();
     }
 
     @Override
@@ -138,16 +148,23 @@ public class MainActivity extends AppCompatActivity {
         baiduMap = mapView.getMap();
         baiduMap.setMapType(BaiduMap.MAP_TYPE_NORMAL);
 
-//        locationManager= (LocationManager) this.getSystemService(this.LOCATION_SERVICE);
-
-        mLocationClient=new LocationClient(getApplicationContext());
-        mLocationClient.registerLocationListener(myListener);
+        //初始化定位服务
+        mLocationClient=new LocationClient(getApplicationContext());    //初始化轨迹服务端
+        mLocationClient.registerLocationListener(myListener);           //注册位置监听器
         baiduMap.setMyLocationEnabled(true);
         initLocation();
+
+        //初始化鹰眼服务
+        mTrace = new Trace(traceServiceId, entityName, isNeedObjectStorage);
+        mTraceClient= new LBSTraceClient(getApplicationContext());      //初始化轨迹服务端
+        int gatherInterval = 3;                                     // 定位周期(单位:秒)
+        int packInterval = 10;                                      // 打包回传周期(单位:秒)
+        mTraceClient.setInterval(gatherInterval, packInterval);     // 设置定位和打包周期
 
 
     }
 
+    //获取GPS权限
     private void requestGPSPermission(){
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -158,6 +175,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    //检查GPS权限
     private boolean checkPermission(){
         int check=ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION);
         Boolean hasPermission=false;
@@ -165,6 +183,7 @@ public class MainActivity extends AppCompatActivity {
         return hasPermission;
     }
 
+    //开始实时监控位置
     private void startGetLocation(){
         if (isNetworkConnected()){
 
@@ -234,6 +253,18 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
+    //开启轨迹采集服务
+    private void startTraceService(){
+        mTraceClient.startTrace(mTrace,traceListener);
+        mTraceClient.startGather(traceListener);
+    }
+    //关闭轨迹采集服务
+    private void stopTraceService(){
+        mTraceClient.stopTrace(mTrace,traceListener);
+        mTraceClient.stopGather(traceListener);
+    }
+
+    //位置监听回调
     public class MyLocationListener implements BDLocationListener
     {
 
@@ -340,6 +371,39 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    //轨迹服务器初始化坚挺
+    OnTraceListener traceListener=new OnTraceListener() {
+        @Override
+        public void onStartTraceCallback(int i, String s) {
+            toast.setText("轨迹服务开启");
+            toast.show();
+        }
+
+        @Override
+        public void onStopTraceCallback(int i, String s) {
+            toast.setText("轨迹服务停止");
+            toast.show();
+        }
+
+        @Override
+        public void onStartGatherCallback(int i, String s) {
+            toast.setText("轨迹信息采集开始");
+            toast.show();
+        }
+
+        @Override
+        public void onStopGatherCallback(int i, String s) {
+            toast.setText("轨迹信息采集停止");
+            toast.show();
+        }
+
+        @Override
+        public void onPushCallback(byte b, PushMessage pushMessage) {
+
+        }
+    };
+
+    //locationClient获取位置的信息设置
     private void initLocation(){
         LocationClientOption option = new LocationClientOption();
         option.setLocationMode(LocationClientOption.LocationMode.Hight_Accuracy);
