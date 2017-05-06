@@ -20,6 +20,9 @@ import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.widget.Toast;
 
 import com.baidu.location.BDLocation;
@@ -31,17 +34,23 @@ import com.baidu.mapapi.SDKInitializer;
 import com.baidu.mapapi.map.BaiduMap;
 import com.baidu.mapapi.map.BitmapDescriptor;
 import com.baidu.mapapi.map.BitmapDescriptorFactory;
+import com.baidu.mapapi.map.MapStatus;
 import com.baidu.mapapi.map.MapStatusUpdate;
 import com.baidu.mapapi.map.MapStatusUpdateFactory;
 import com.baidu.mapapi.map.MapView;
+import com.baidu.mapapi.map.MarkerOptions;
 import com.baidu.mapapi.map.MyLocationConfiguration;
 import com.baidu.mapapi.map.MyLocationData;
+import com.baidu.mapapi.map.OverlayOptions;
 import com.baidu.mapapi.model.LatLng;
+import com.baidu.mapapi.model.inner.Point;
 
 import java.security.Permission;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
+
+    public static String TAG="MyBaiduMap_MainActivity";
 
     private MapView mapView;        //百度地图View
     private BaiduMap baiduMap;      //百度地图对象
@@ -66,6 +75,27 @@ public class MainActivity extends AppCompatActivity {
        startGetLocation();
     }
 
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.main_menu,menu);
+        return super.onCreateOptionsMenu(menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch (item.getItemId()){
+            case R.id.menuitem_permission:
+                    if (!checkPermission()){
+                        requestGPSPermission();
+                    }
+                break;
+            case R.id.menuitem_mylocation:
+                    getMyLocation();
+                break;
+
+        }
+        return super.onOptionsItemSelected(item);
+    }
 
     //申请GPS权限后结果处理
     @Override
@@ -112,25 +142,40 @@ public class MainActivity extends AppCompatActivity {
 
         mLocationClient=new LocationClient(getApplicationContext());
         mLocationClient.registerLocationListener(myListener);
-        initLocation();
         baiduMap.setMyLocationEnabled(true);
+        initLocation();
 
 
     }
 
+    private void requestGPSPermission(){
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            //6.0以上权限获取
+            requestPermissions(permissions, 0);
+        }else {
+            //6.0以下权限获取
+        }
+    }
+
+    private boolean checkPermission(){
+        int check=ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION);
+        Boolean hasPermission=false;
+        hasPermission=check==PackageManager.PERMISSION_GRANTED;
+        return hasPermission;
+    }
+
     private void startGetLocation(){
         if (isNetworkConnected()){
-            int check=ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION);
-            if (check== PackageManager.PERMISSION_GRANTED){
+
+            if (checkPermission()){
                 toast.setText("GPS已打开");
                 toast.show();
                 mLocationClient.start();
             }else {
                 toast.setText("请打开GPS");
                 toast.show();
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    requestPermissions(permissions,0);
-                }
+               requestGPSPermission();
             }
 
         }else {
@@ -139,16 +184,54 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void setLocation(BDLocation location ){
-        baiduMap.setMyLocationEnabled(true);
-        MyLocationData data=new MyLocationData.Builder()
-                .accuracy(location.getRadius())
-                .direction(100)
-                .latitude(location.getLatitude())
-                .longitude(location.getLongitude())
-                .build();
-        baiduMap.setMyLocationData(data);
-        currentMarker= BitmapDescriptorFactory.fromResource(R.mipmap.ic_launcher);
+    //在地图上获取我的位置，并显示在地图上
+    private void getMyLocation(){
+        if (checkPermission()){
+            //如果有GPS权限
+            BDLocation location=mLocationClient.getLastKnownLocation();
+            baiduMap.setMyLocationEnabled(true);
+
+            //定义地图更新信息
+            LatLng latlng=new LatLng(location.getLatitude(),location.getLongitude());
+            float rotate=0;
+            float overlook=0;
+            float zoom= 19;
+            //地图中心点在地图上的坐标，这里去地图中心
+            android.graphics.Point point=new android.graphics.Point(mapView.getWidth()/2,mapView.getHeight()/2);
+            //创建地图状态
+            MapStatus status=new MapStatus.Builder()
+                    .rotate(rotate)
+                    .overlook(overlook)
+                    .target(latlng)
+                    .targetScreen(point)
+                    .zoom(zoom).build();
+            //创建地图更新状态
+            MapStatusUpdate updateupdate=MapStatusUpdateFactory.newMapStatus(status);
+
+
+//            MyLocationData data=new MyLocationData.Builder()
+//                    .accuracy(location.getRadius())
+//                    .direction(0)
+//                    .latitude(location.getLatitude())
+//                    .longitude(location.getLongitude())
+//                    .build();
+//            baiduMap.setMyLocationData(data);
+            currentMarker= BitmapDescriptorFactory.fromResource(R.drawable.icon_openmap_mark);
+            OverlayOptions option = new MarkerOptions()
+                    .position(latlng)
+                    .icon(currentMarker);
+            baiduMap.clear();
+            baiduMap.addOverlay(option);
+//            MyLocationConfiguration myLocationConfiguration=new MyLocationConfiguration(mCurrentMode,true,currentMarker);
+//            baiduMap.setMyLocationConfiguration(myLocationConfiguration);
+            //更新地图信息
+            baiduMap.setMapStatus(updateupdate);
+            baiduMap.setMyLocationEnabled(false);
+        }else {
+        //没有权限则申请权限
+            requestGPSPermission();
+        }
+
     }
 
     public class MyLocationListener implements BDLocationListener
