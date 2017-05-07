@@ -2,4 +2,5 @@
     <string name="app_name">MyBaiduMap</string>
     <string name="mylocation">我的位置</string>
     <string name="requestPermission_GPS">GPS权限</string>
+    <string name="trace_show">显示轨迹</string>
 </resources>

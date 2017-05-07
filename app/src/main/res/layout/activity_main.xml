@@ -8,9 +8,25 @@
     android:paddingRight="@dimen/activity_horizontal_margin"
     android:paddingTop="@dimen/activity_vertical_margin"
     tools:context="com.lsj.hdmi.mybaidumap.MainActivity">
+        <ScrollView
+            android:id="@+id/scrollview"
+            android:layout_width="match_parent"
+            android:layout_height="200dp"
+            android:layout_alignParentBottom="true">
+            <TextView
+                android:id="@+id/location_etxtview"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="20sp"
+                android:text="位置信息"
+                android:layout_alignParentBottom="true"/>
+        </ScrollView>
 
-<com.baidu.mapapi.map.MapView
-    android:id="@+id/baidu_mapview"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"></com.baidu.mapapi.map.MapView>
+
+    <com.baidu.mapapi.map.MapView
+        android:id="@+id/baidu_mapview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_above="@id/scrollview"
+        />
 </RelativeLayout>

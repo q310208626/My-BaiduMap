@@ -2,27 +2,21 @@ package com.lsj.hdmi.mybaidumap;
 
 import android.Manifest;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.location.Criteria;
-import android.location.Location;
-import android.location.LocationListener;
-import android.location.LocationManager;
+import android.graphics.Color;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.os.Build;
-import android.provider.Settings;
+import android.os.Looper;
 import android.support.annotation.NonNull;
-import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.telephony.TelephonyManager;
 import android.util.Log;
 import android.view.Menu;
-import android.view.MenuInflater;
 import android.view.MenuItem;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import com.baidu.location.BDLocation;
@@ -40,22 +34,36 @@ import com.baidu.mapapi.map.MapStatusUpdateFactory;
 import com.baidu.mapapi.map.MapView;
 import com.baidu.mapapi.map.MarkerOptions;
 import com.baidu.mapapi.map.MyLocationConfiguration;
-import com.baidu.mapapi.map.MyLocationData;
 import com.baidu.mapapi.map.OverlayOptions;
+import com.baidu.mapapi.map.PolylineOptions;
 import com.baidu.mapapi.model.LatLng;
-import com.baidu.mapapi.model.inner.Point;
+import com.baidu.mapapi.model.LatLngBounds;
 import com.baidu.trace.LBSTraceClient;
 import com.baidu.trace.Trace;
+import com.baidu.trace.api.track.ClearCacheTrackRequest;
+import com.baidu.trace.api.track.ClearCacheTrackResponse;
+import com.baidu.trace.api.track.DistanceResponse;
+import com.baidu.trace.api.track.HistoryTrackRequest;
+import com.baidu.trace.api.track.HistoryTrackResponse;
+import com.baidu.trace.api.track.LatestPointResponse;
 import com.baidu.trace.api.track.OnTrackListener;
+import com.baidu.trace.api.track.QueryCacheTrackResponse;
+import com.baidu.trace.api.track.SupplementMode;
+import com.baidu.trace.api.track.TrackPoint;
 import com.baidu.trace.model.OnTraceListener;
+import com.baidu.trace.model.Point;
+import com.baidu.trace.model.ProcessOption;
 import com.baidu.trace.model.PushMessage;
+import com.baidu.trace.model.TransportMode;
 
-import java.security.Permission;
+
+import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
 
     public static String TAG="MyBaiduMap_MainActivity";
+
 
     private MapView mapView;        //百度地图View
     private BaiduMap baiduMap;      //百度地图对象
@@ -67,15 +75,20 @@ public class MainActivity extends AppCompatActivity {
     private BitmapDescriptor currentMarker;       //定位标志
 
     //鹰眼轨迹服务
+    int tag=1;      //请求标识
     private long traceServiceId=140176;
-    private String entityName = "myTrace";
+    private String entityName;
     boolean isNeedObjectStorage = false;
     private Trace mTrace;
     private LBSTraceClient mTraceClient;
+    private OnTraceListener myTraceListener =new MyOnTraceListener();
+    HistoryTrackRequest historyTrackRequest;
 
 
     Toast toast;
     String[] permissions = {Manifest.permission.ACCESS_COARSE_LOCATION};    //gps权限
+
+    private TextView locationTextview;//测试textView
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -83,6 +96,7 @@ public class MainActivity extends AppCompatActivity {
         SDKInitializer.initialize(getApplicationContext());
         setContentView(R.layout.activity_main);
         init();
+        startGetLocation(); //启动获取定位
     }
 
     @Override
@@ -96,11 +110,22 @@ public class MainActivity extends AppCompatActivity {
         switch (item.getItemId()){
             case R.id.menuitem_permission:
                     if (!checkPermission()){
+                        startGetLocation();
                         requestGPSPermission();
                     }
                 break;
             case R.id.menuitem_mylocation:
                     getMyLocation();
+                break;
+            case R.id.menuitem_traceshow:
+
+                if (mTraceClient!=null){
+                    startTraceService();
+
+                }else {
+                    Log.d(TAG, "onOptionsItemSelected: --------------mTraceClient==null");
+                }
+
                 break;
 
         }
@@ -126,6 +151,7 @@ public class MainActivity extends AppCompatActivity {
         super.onDestroy();
         //在activity执行onDestroy时执行mMapView.onDestroy()，实现地图生命周期管理
         mapView.onDestroy();
+        stopTraceService();
     }
 
     @Override
@@ -140,9 +166,11 @@ public class MainActivity extends AppCompatActivity {
         super.onPause();
         //在activity执行onPause时执行mMapView. onPause ()，实现地图生命周期管理
         mapView.onPause();
+
     }
 
     private void init() {
+        locationTextview= (TextView) findViewById(R.id.location_etxtview);
         toast=Toast.makeText(this,"",Toast.LENGTH_LONG);
         mapView = (MapView) findViewById(R.id.baidu_mapview);
         baiduMap = mapView.getMap();
@@ -155,11 +183,14 @@ public class MainActivity extends AppCompatActivity {
         initLocation();
 
         //初始化鹰眼服务
+        entityName=getIMEI();
+        Log.d(TAG, "init: -------------------------entityName"+entityName);
         mTrace = new Trace(traceServiceId, entityName, isNeedObjectStorage);
-        mTraceClient= new LBSTraceClient(getApplicationContext());      //初始化轨迹服务端
+        mTraceClient= new LBSTraceClient(getApplicationContext());//初始化轨迹服务端
         int gatherInterval = 3;                                     // 定位周期(单位:秒)
-        int packInterval = 10;                                      // 打包回传周期(单位:秒)
+        int packInterval = 3;                                      // 打包回传周期(单位:秒)
         mTraceClient.setInterval(gatherInterval, packInterval);     // 设置定位和打包周期
+        mTraceClient.setOnTraceListener(myTraceListener);
 
 
     }
@@ -180,6 +211,7 @@ public class MainActivity extends AppCompatActivity {
         int check=ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION);
         Boolean hasPermission=false;
         hasPermission=check==PackageManager.PERMISSION_GRANTED;
+        Log.d(TAG, "checkPermission: -----------------permission"+hasPermission);
         return hasPermission;
     }
 
@@ -209,7 +241,9 @@ public class MainActivity extends AppCompatActivity {
             //如果有GPS权限
             BDLocation location=mLocationClient.getLastKnownLocation();
             baiduMap.setMyLocationEnabled(true);
-
+            Log.d(TAG, "getMyLocation: -------------------location"+location);
+            int error=location.getLocType();
+            Log.d(TAG, "getMyLocation: -------------------errorType"+error);
             //定义地图更新信息
             LatLng latlng=new LatLng(location.getLatitude(),location.getLongitude());
             float rotate=0;
@@ -255,13 +289,48 @@ public class MainActivity extends AppCompatActivity {
 
     //开启轨迹采集服务
     private void startTraceService(){
-        mTraceClient.startTrace(mTrace,traceListener);
-        mTraceClient.startGather(traceListener);
+        mTraceClient.startTrace(mTrace,null);
+
     }
     //关闭轨迹采集服务
     private void stopTraceService(){
-        mTraceClient.stopTrace(mTrace,traceListener);
-        mTraceClient.stopGather(traceListener);
+        if (mTraceClient!=null){
+            mTraceClient.stopTrace(mTrace, null);
+            mTraceClient.stopGather(null);
+        }
+    }
+
+    //画轨迹方法
+    private void showTrace(){
+
+
+        List<String> entityNames=new ArrayList<String>();
+        entityNames.add(entityName);
+        ClearCacheTrackRequest clearCacheTrackRequest=new ClearCacheTrackRequest(tag,traceServiceId,entityNames);
+        mTraceClient.clearCacheTrack(clearCacheTrackRequest,hostoryTraceListener);
+        historyTrackRequest = new HistoryTrackRequest(tag, traceServiceId, entityName);
+        //设置轨迹查询起止时间
+        long startTime = System.currentTimeMillis() / 1000 - 12 * 60 * 60;  // 开始时间(单位：秒)
+        long endTime = System.currentTimeMillis() / 1000;                   // 结束时间(单位：秒)
+        historyTrackRequest.setStartTime(startTime);                        // 设置开始时间
+        historyTrackRequest.setEndTime(endTime);                            // 设置结束时间
+
+//        // 创建纠偏选项实例
+//        ProcessOption processOption = new ProcessOption();
+//        // 设置需要去噪
+//        processOption.setNeedDenoise(true);
+//        // 设置需要抽稀
+//        processOption.setNeedVacuate(true);
+//        // 设置需要绑路
+//        processOption.setNeedMapMatch(true);
+//        // 设置精度过滤值(定位精度大于100米的过滤掉)
+//        processOption.setRadiusThreshold(30);
+//        processOption.setTransportMode(TransportMode.walking);
+//        historyTrackRequest.setProcessOption(processOption);
+//        historyTrackRequest.setSupplementMode(SupplementMode.walking);
+
+        mTraceClient.queryHistoryTrack(historyTrackRequest,hostoryTraceListener);
+
     }
 
     //位置监听回调
@@ -371,12 +440,13 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    //轨迹服务器初始化坚挺
-    OnTraceListener traceListener=new OnTraceListener() {
+    //轨迹服务器初始化监听
+   public class MyOnTraceListener implements OnTraceListener{
         @Override
         public void onStartTraceCallback(int i, String s) {
             toast.setText("轨迹服务开启");
             toast.show();
+            mTraceClient.startGather(myTraceListener);
         }
 
         @Override
@@ -389,6 +459,7 @@ public class MainActivity extends AppCompatActivity {
         public void onStartGatherCallback(int i, String s) {
             toast.setText("轨迹信息采集开始");
             toast.show();
+            showTrace();
         }
 
         @Override
@@ -400,6 +471,57 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onPushCallback(byte b, PushMessage pushMessage) {
 
+        }
+
+    }
+
+    //历史轨迹监听器
+    OnTrackListener hostoryTraceListener=new OnTrackListener() {
+        @Override
+        public void onHistoryTrackCallback(HistoryTrackResponse historyTrackResponse) {
+
+            com.baidu.trace.model.Point startPoint=historyTrackResponse.getStartPoint();
+            com.baidu.trace.model.Point endPoint=historyTrackResponse.getEndPoint();
+            Log.d(TAG, "onHistoryTrackCallback: -----------------------startPoint"+startPoint.getLocation().getLatitude()+" "+startPoint.getLocation().getLongitude());
+            Log.d(TAG, "onHistoryTrackCallback: -----------------------endPoint"+endPoint.getLocation().getLatitude()+" "+endPoint.getLocation().getLongitude());
+            locationTextview.setText("");
+            locationTextview.append(startPoint.getLocation().getLatitude()+"\n");
+            locationTextview.append(startPoint.getLocation().getLongitude()+"\n");
+            locationTextview.append(endPoint.getLocation().getLatitude()+"\n");
+            locationTextview.append(endPoint.getLocation().getLongitude()+"");
+            List<TrackPoint> points=historyTrackResponse.getTrackPoints();
+
+            List<LatLng> latLngs=pointToLaTLng(points);
+//            latLngs.clear();
+//            for(int i=0;i<10;i++){
+//                double lat=startPoint.getLocation().getLatitude()+0.00002*i;
+//                double lon=startPoint.getLocation().getLongitude()+0.00001*i;
+//                latLngs.add(new LatLng(lat,lon));
+//            }
+            latLngs=getRealPoint(latLngs);
+            drawHistoryTrack(latLngs);
+           // super.onHistoryTrackCallback(historyTrackResponse);
+        }
+
+        @Override
+        public void onDistanceCallback(DistanceResponse distanceResponse) {
+            super.onDistanceCallback(distanceResponse);
+        }
+
+        @Override
+        public void onLatestPointCallback(LatestPointResponse latestPointResponse) {
+            super.onLatestPointCallback(latestPointResponse);
+        }
+
+        @Override
+        public void onQueryCacheTrackCallback(QueryCacheTrackResponse queryCacheTrackResponse) {
+            super.onQueryCacheTrackCallback(queryCacheTrackResponse);
+        }
+
+        @Override
+        public void onClearCacheTrackCallback(ClearCacheTrackResponse clearCacheTrackResponse) {
+            Log.d(TAG, "onClearCacheTrackCallback: ---------------------清除轨迹");
+            super.onClearCacheTrackCallback(clearCacheTrackResponse);
         }
     };
 
@@ -443,6 +565,63 @@ public class MainActivity extends AppCompatActivity {
         mLocationClient.setLocOption(option);
     }
 
+    private List<LatLng> pointToLaTLng(List<TrackPoint> points){
+        List<LatLng> latlngs=new ArrayList<LatLng>();
+        for (TrackPoint trackPoint:points){
+            latlngs.add(new LatLng(trackPoint.getLocation().getLatitude(),trackPoint.getLocation().getLongitude()));
+        }
+        return latlngs;
+    }
+
+    public void drawHistoryTrack(final List<LatLng> points) {
+        // 绘制新覆盖物前，清空之前的覆盖物
+        baiduMap.clear();
+
+        if (points == null || points.size() == 0) {
+//            Looper.prepare();
+            Toast.makeText(this, "当前查询无轨迹点", Toast.LENGTH_SHORT).show();
+//            Looper.loop();
+            //resetMarker();
+        } else if (points.size() > 1) {
+            locationTextview.setText("");
+            for (int i=0;i<points.size();i++){
+                LatLng latLng=points.get(i);
+                locationTextview.append(latLng.latitude+"\n");
+                locationTextview.append(latLng.longitude+"\n");
+            }
+            LatLng llC = points.get(0);
+            LatLng llD = points.get(points.size() - 1);
+            LatLngBounds bounds = new LatLngBounds.Builder()
+                    .include(llC).include(llD).build();
+
+            MapStatusUpdate msUpdate = MapStatusUpdateFactory.newLatLngBounds(bounds);
+
+            BitmapDescriptor bmStart = BitmapDescriptorFactory.fromResource(R.drawable.icon_openmap_focuse_mark);
+            BitmapDescriptor bmEnd = BitmapDescriptorFactory.fromResource(R.drawable.icon_openmap_mark);
+
+            // 添加起点图标
+            MarkerOptions startMarker = new MarkerOptions()
+                    .position(points.get(points.size() - 1)).icon(bmStart)
+                    .zIndex(9).draggable(true);
+            Log.d(TAG, "drawHistoryTrack: -----------------------起点"+points.get(points.size() - 1).latitude+" "+points.get(points.size() - 1).longitude);
+
+            // 添加终点图标
+            MarkerOptions endMarker = new MarkerOptions().position(points.get(0))
+                    .icon(bmEnd).zIndex(9).draggable(true);
+            Log.d(TAG, "drawHistoryTrack: -----------------------终点"+points.get(0).latitude+" "+points.get(0).longitude);
+            // 添加路线（轨迹）
+            PolylineOptions polyline = new PolylineOptions().width(10)
+                    .color(Color.RED).points(points);
+
+            baiduMap.setMapStatus(msUpdate);
+            baiduMap.addOverlay(startMarker);
+            baiduMap.addOverlay(endMarker);
+            baiduMap.addOverlay(polyline);
+
+        }
+
+    }
+
 
     //检测网络是否可用
     private boolean isNetworkConnected() {
@@ -453,6 +632,43 @@ public class MainActivity extends AppCompatActivity {
             return network.isAvailable();
         }
         return false;
+    }
+
+    //获取设备标识
+    public String getIMEI() {
+        TelephonyManager TelephonyMgr = (TelephonyManager) this.getSystemService(TELEPHONY_SERVICE);
+        String szImei = TelephonyMgr.getDeviceId();
+        return szImei;
+    }
+
+    //去除轨迹中非法点
+    private List<LatLng> getRealPoint(List<LatLng> latLngs){
+        List<LatLng> noZeroPoints=new ArrayList<LatLng>();
+        List<LatLng> realPoints=new ArrayList<LatLng>();
+
+        //去除0.0
+        for (int i=0;i<latLngs.size();i++){
+            LatLng latLng=latLngs.get(i);
+            if (Math.abs(latLng.latitude-0.0)<0.01&&Math.abs(latLng.longitude-0.0)<0.01){
+            }else {
+                noZeroPoints.add(latLng);
+            }
+        }
+        for (int i=0;i<noZeroPoints.size()-1;){
+            LatLng latLng=noZeroPoints.get(i);
+            LatLng latLng1=noZeroPoints.get(i+1);
+            if (Math.abs(latLng.latitude-latLng1.latitude)>0.0002){
+                realPoints.remove(i+1);
+                break;
+            }else  if (Math.abs(latLng.longitude-latLng1.longitude)>0.0002){
+                realPoints.remove(i+1);
+                break;
+            }else {
+                realPoints.add(latLng);
+                i++;
+            }
+        }
+        return realPoints;
     }
 
 }
