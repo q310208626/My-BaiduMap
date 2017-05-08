@@ -7,7 +7,8 @@ import android.graphics.Color;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.os.Build;
-import android.os.Looper;
+import android.os.Handler;
+import android.os.Message;
 import android.support.annotation.NonNull;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
@@ -40,7 +41,6 @@ import com.baidu.mapapi.model.LatLng;
 import com.baidu.mapapi.model.LatLngBounds;
 import com.baidu.trace.LBSTraceClient;
 import com.baidu.trace.Trace;
-import com.baidu.trace.api.track.ClearCacheTrackRequest;
 import com.baidu.trace.api.track.ClearCacheTrackResponse;
 import com.baidu.trace.api.track.DistanceResponse;
 import com.baidu.trace.api.track.HistoryTrackRequest;
@@ -48,13 +48,9 @@ import com.baidu.trace.api.track.HistoryTrackResponse;
 import com.baidu.trace.api.track.LatestPointResponse;
 import com.baidu.trace.api.track.OnTrackListener;
 import com.baidu.trace.api.track.QueryCacheTrackResponse;
-import com.baidu.trace.api.track.SupplementMode;
 import com.baidu.trace.api.track.TrackPoint;
 import com.baidu.trace.model.OnTraceListener;
-import com.baidu.trace.model.Point;
-import com.baidu.trace.model.ProcessOption;
 import com.baidu.trace.model.PushMessage;
-import com.baidu.trace.model.TransportMode;
 
 
 import java.util.ArrayList;
@@ -83,12 +79,15 @@ public class MainActivity extends AppCompatActivity {
     private LBSTraceClient mTraceClient;
     private OnTraceListener myTraceListener =new MyOnTraceListener();
     HistoryTrackRequest historyTrackRequest;
+    private List<LatLng> historyLatlngs=new ArrayList<LatLng>();    //记录历史点
+    public boolean isCallDrawTrace=false;
 
 
     Toast toast;
     String[] permissions = {Manifest.permission.ACCESS_COARSE_LOCATION};    //gps权限
 
-    private TextView locationTextview;//测试textView
+    private TextView locationTextview;
+    private StringBuffer locationStringBuffer =new StringBuffer();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -119,12 +118,23 @@ public class MainActivity extends AppCompatActivity {
                 break;
             case R.id.menuitem_traceshow:
 
-                if (mTraceClient!=null){
-                    startTraceService();
-
+//                if (mTraceClient!=null){
+//                    startTraceService();
+//
+//                }else {
+//                    Log.d(TAG, "onOptionsItemSelected: --------------mTraceClient==null");
+//                }
+                if (!isCallDrawTrace){
+                    isCallDrawTrace=true;
+                    new Thread(callDrawTraceRunnable).start();
+                    toast.setText("开始记录轨迹");
+                    toast.show();
                 }else {
-                    Log.d(TAG, "onOptionsItemSelected: --------------mTraceClient==null");
+                    Log.d(TAG, "onOptionsItemSelected: ---------------threadisAlive");
+                    isCallDrawTrace=false;
                 }
+
+
 
                 break;
 
@@ -304,10 +314,10 @@ public class MainActivity extends AppCompatActivity {
     private void showTrace(){
 
 
-        List<String> entityNames=new ArrayList<String>();
-        entityNames.add(entityName);
-        ClearCacheTrackRequest clearCacheTrackRequest=new ClearCacheTrackRequest(tag,traceServiceId,entityNames);
-        mTraceClient.clearCacheTrack(clearCacheTrackRequest,hostoryTraceListener);
+//        List<String> entityNames=new ArrayList<String>();
+//        entityNames.add(entityName);
+//        ClearCacheTrackRequest clearCacheTrackRequest=new ClearCacheTrackRequest(tag,traceServiceId,entityNames);
+//        mTraceClient.clearCacheTrack(clearCacheTrackRequest,hostoryTraceListener);
         historyTrackRequest = new HistoryTrackRequest(tag, traceServiceId, entityName);
         //设置轨迹查询起止时间
         long startTime = System.currentTimeMillis() / 1000 - 12 * 60 * 60;  // 开始时间(单位：秒)
@@ -344,6 +354,11 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void onReceiveLocation(BDLocation location) {
+
+            if (location!=null){
+                LatLng latLng=new LatLng(location.getLatitude(),location.getLongitude());
+                historyLatlngs.add(latLng);
+            }
 
             //获取定位结果
             StringBuffer sb = new StringBuffer(256);
@@ -389,6 +404,8 @@ public class MainActivity extends AppCompatActivity {
                 // 网络定位结果
                 sb.append("\naddr : ");
                 sb.append(location.getAddrStr());    //获取地址信息
+
+                ;
 
                 sb.append("\noperationers : ");
                 sb.append(location.getOperators());    //获取运营商信息
@@ -437,6 +454,16 @@ public class MainActivity extends AppCompatActivity {
             sb.append(errorType);
 
             Log.i("BaiduLocationApiDem", sb.toString());
+
+            if (location!=null){
+                locationStringBuffer.append("大概位置: "+location.getLocationDescribe()+"\n");
+                locationStringBuffer.append("经度: "+location.getLatitude()+"\n");
+                locationStringBuffer.append("维度: "+location.getLongitude()+"\n");
+            }
+            Message message=new Message();
+            message.what=2;
+            handler.sendMessage(message);
+
         }
     }
 
@@ -578,17 +605,9 @@ public class MainActivity extends AppCompatActivity {
         baiduMap.clear();
 
         if (points == null || points.size() == 0) {
-//            Looper.prepare();
             Toast.makeText(this, "当前查询无轨迹点", Toast.LENGTH_SHORT).show();
-//            Looper.loop();
-            //resetMarker();
         } else if (points.size() > 1) {
-            locationTextview.setText("");
-            for (int i=0;i<points.size();i++){
-                LatLng latLng=points.get(i);
-                locationTextview.append(latLng.latitude+"\n");
-                locationTextview.append(latLng.longitude+"\n");
-            }
+
             LatLng llC = points.get(0);
             LatLng llD = points.get(points.size() - 1);
             LatLngBounds bounds = new LatLngBounds.Builder()
@@ -654,21 +673,60 @@ public class MainActivity extends AppCompatActivity {
                 noZeroPoints.add(latLng);
             }
         }
-        for (int i=0;i<noZeroPoints.size()-1;){
+        for (int i=0;i<noZeroPoints.size()-2;){
             LatLng latLng=noZeroPoints.get(i);
             LatLng latLng1=noZeroPoints.get(i+1);
-            if (Math.abs(latLng.latitude-latLng1.latitude)>0.0002){
-                realPoints.remove(i+1);
+            if (Math.abs(latLng.latitude-latLng1.latitude)>0.0005){
+                noZeroPoints.remove(i+1);
                 break;
-            }else  if (Math.abs(latLng.longitude-latLng1.longitude)>0.0002){
-                realPoints.remove(i+1);
+            }else  if (Math.abs(latLng.longitude-latLng1.longitude)>0.0005){
+                noZeroPoints.remove(i+1);
                 break;
             }else {
                 realPoints.add(latLng);
                 i++;
             }
         }
+        realPoints=noZeroPoints;
         return realPoints;
     }
+
+    Runnable callDrawTraceRunnable = new Runnable() {
+        @Override
+        public void run() {
+            while(isCallDrawTrace){
+                historyLatlngs=getRealPoint(historyLatlngs);
+                drawHistoryTrack(historyLatlngs);
+                Log.d(TAG, "run: -------------------------------callDrawRunning");
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            //线程发送信息到主线程,提醒ui更新
+            Message message=new Message();
+            message.what=1;
+            handler.sendMessage(message);
+        }
+
+
+    };
+
+    Handler handler=new Handler(){
+        @Override
+        public void handleMessage(Message msg) {
+            switch  (msg.what){
+                case 1:
+                    toast.setText("停止记录轨迹");
+                    toast.show();
+                    break;
+                case 2:
+                    locationTextview.setText(locationStringBuffer);
+                    locationStringBuffer.delete(0,locationStringBuffer.length());
+                    break;
+            }
+        }
+    };
 
 }

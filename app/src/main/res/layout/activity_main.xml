@@ -11,7 +11,7 @@
         <ScrollView
             android:id="@+id/scrollview"
             android:layout_width="match_parent"
-            android:layout_height="200dp"
+            android:layout_height="140dp"
             android:layout_alignParentBottom="true">
             <TextView
                 android:id="@+id/location_etxtview"
